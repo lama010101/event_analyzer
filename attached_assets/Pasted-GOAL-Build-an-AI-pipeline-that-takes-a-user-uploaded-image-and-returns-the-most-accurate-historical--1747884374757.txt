@@ -1,0 +1,91 @@
+GOAL
+Build an AI pipeline that takes a user-uploaded image and returns the most accurate historical event description possible, including title, detailed description, date, location, GPS coordinates, and confidence levels.
+
+CONTEXT
+This system is used in the "Guess History" game and educational tools to understand the context of visual historical data. The image may contain embedded text and visual clues (e.g., uniforms, architecture, vehicles). Metadata extraction must be accurate, and the event description must be specific (not generic like “a historical photo”).
+
+INSTRUCTIONS
+1. IMAGE PREPROCESSING
+Resize the image to 1024px wide.
+
+Normalize color space.
+
+Use OpenCV to enhance contrast if image is black and white.
+
+Save optimized image for inference and comparison.
+
+2. OCR: TEXT DETECTION
+Use Tesseract OCR or Google Vision API to extract any visible text.
+
+Store detected text in image_text field.
+
+3. CAPTIONING: VISUAL DESCRIPTION
+Use BLIP-2 or GPT-4o vision input to generate a caption for the scene.
+
+Example: “A protester standing in front of tanks on a road in Beijing, 1989.”
+
+4. OBJECT + SCENE DETECTION
+Use YOLOv8 or Segment Anything (SAM) to identify key objects: faces, weapons, architecture, clothing.
+
+Store output in detected_objects list.
+
+5. HISTORICAL INFERENCE (LLM + CONTEXT)
+Feed caption + OCR text + detected objects into GPT-4o (text-only mode) with this prompt:
+
+text
+Copy
+Edit
+Given this image metadata: 
+- Caption: [caption]
+- Detected Text: [image_text]
+- Objects: [detected_objects]
+
+Determine the exact historical event shown. Output must include:
+- Event Title
+- Description (3–4 sentence summary)
+- Location Name (precise: e.g., "Red Square, Moscow, Russia")
+- Year (or full date if known)
+- GPS Coordinates (inferred from location)
+- Confidence scores (0–100%) for: year, location, event name
+6. OPTIONAL: HISTORICAL CONTEXT MATCHING
+Search Wikidata, Wikipedia, or internal event database to validate event info and refine it.
+
+Return the matched event and source link.
+
+7. OUTPUT FORMAT
+json
+Copy
+Edit
+{
+  "title": "Fall of the Berlin Wall",
+  "description": "Crowds of East Berliners gather on top of the wall near Brandenburg Gate as border restrictions are lifted on November 9, 1989.",
+  "location_name": "Brandenburg Gate, Berlin, Germany",
+  "gps": [52.5163, 13.3777],
+  "year": 1989,
+  "event": "Fall of the Berlin Wall",
+  "confidence": {
+    "year": 98,
+    "location": 95,
+    "event": 97
+  }
+}
+VERIFICATION STEPS
+Use test image berlin_wall_1989.jpg to validate the system.
+
+Check that the output JSON contains no missing fields.
+
+Validate that GPS is correctly inferred from location_name.
+
+Ensure confidence levels are numeric and between 0–100.
+
+Check if event name matches a known historical event.
+
+SUCCESS CRITERIA
+System correctly infers and outputs full metadata for known events.
+
+Confidence levels reflect strength of inference.
+
+Works on at least 5 test images from different decades.
+
+Output is saved to Supabase (if integration is enabled).
+
