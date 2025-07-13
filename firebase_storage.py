@@ -19,67 +19,106 @@ class FirebaseStorageManager:
     def _initialize_firebase(self):
         """Initialize Firebase Storage using REST API"""
         try:
-            # Get service account key from environment
-            self.service_account_key = os.getenv('FIREBASE_SERVICE_ACCOUNT_KEY')
+            # Get Firebase config from environment variables
+            self.firebase_api_key = os.getenv('Firebase_api_Key')
+            self.firebase_project_id = os.getenv('firebase_projectId')
             
-            if not self.service_account_key:
-                print("Warning: No Firebase service account key found.")
-                self.access_token = None
-                return
-            
-            # Parse service account info
-            self.service_account_info = json.loads(self.service_account_key)
-            self.access_token = self._get_access_token()
-            
-            if self.access_token:
-                print(f"Firebase Storage initialized for bucket: {self.bucket_name}")
+            if self.firebase_api_key:
+                print(f"Firebase initialized with API key: {self.firebase_api_key[:10]}...")
+                print(f"Firebase project ID: {self.firebase_project_id}")
+                self.initialized = True
             else:
-                print("Failed to get Firebase access token")
+                print("Warning: No Firebase API key found in environment")
+                self.initialized = False
                 
         except Exception as e:
             print(f"Error initializing Firebase: {str(e)}")
-            self.access_token = None
+            self.initialized = False
     
-    def _get_access_token(self):
-        """Simplified Firebase Storage upload using direct API"""
-        # For now, we'll use a direct upload approach
-        print("Using simplified Firebase Storage approach")
-        return "simple_upload"
+    def optimize_image(self, image, max_width_desktop=1200, max_width_mobile=800, quality=85):
+        """Optimize image for web usage and convert to WebP"""
+        try:
+            # Convert to RGB if needed (for WebP compatibility)
+            if image.mode in ('RGBA', 'LA', 'P'):
+                # Create white background for transparent images
+                background = Image.new('RGB', image.size, (255, 255, 255))
+                if image.mode == 'P':
+                    image = image.convert('RGBA')
+                background.paste(image, mask=image.split()[-1] if 'A' in image.mode else None)
+                image = background
+            elif image.mode != 'RGB':
+                image = image.convert('RGB')
+            
+            # Create desktop version
+            desktop_image = image.copy()
+            if desktop_image.width > max_width_desktop:
+                ratio = max_width_desktop / desktop_image.width
+                new_height = int(desktop_image.height * ratio)
+                desktop_image = desktop_image.resize((max_width_desktop, new_height), Image.Resampling.LANCZOS)
+            
+            # Create mobile version  
+            mobile_image = image.copy()
+            if mobile_image.width > max_width_mobile:
+                ratio = max_width_mobile / mobile_image.width
+                new_height = int(mobile_image.height * ratio)
+                mobile_image = mobile_image.resize((max_width_mobile, new_height), Image.Resampling.LANCZOS)
+            
+            return desktop_image, mobile_image
+            
+        except Exception as e:
+            print(f"Error optimizing image: {str(e)}")
+            return image, image
     
-    def upload_image(self, uploaded_file, image_index: int) -> Optional[str]:
+    def upload_image(self, uploaded_file, image_index: int, log_container=None) -> Optional[str]:
         """
-        Upload image to Firebase Storage using REST API
+        Upload optimized image to Firebase Storage using REST API
         
         Args:
             uploaded_file: Streamlit uploaded file object
             image_index: Index of the image in the batch
+            log_container: Streamlit container for logging
             
         Returns:
             Public URL of the uploaded image or None if failed
         """
+        def log_message(message):
+            print(message)
+            if log_container:
+                log_container.write(f"🔄 {message}")
+        
         try:
+            log_message("Starting image upload process...")
+            
+            # Load and optimize image
+            log_message("Loading image for optimization...")
+            image = Image.open(io.BytesIO(uploaded_file.getvalue()))
+            log_message(f"Original image size: {image.width}x{image.height}")
+            
+            # Optimize image
+            desktop_image, mobile_image = self.optimize_image(image)
+            log_message(f"Optimized desktop: {desktop_image.width}x{desktop_image.height}")
+            log_message(f"Optimized mobile: {mobile_image.width}x{mobile_image.height}")
+            
+            # Convert to WebP format
+            webp_buffer = io.BytesIO()
+            desktop_image.save(webp_buffer, format='WebP', quality=85, optimize=True)
+            webp_data = webp_buffer.getvalue()
+            log_message(f"Converted to WebP, size: {len(webp_data)} bytes")
+            
             # Generate unique filename
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            file_extension = uploaded_file.name.split('.')[-1].lower()
-            safe_filename = uploaded_file.name.replace(' ', '_').replace('(', '').replace(')', '')
-            filename = f"{timestamp}_{image_index}_{safe_filename}"
-            
-            # Full path in storage
+            base_filename = uploaded_file.name.split('.')[0].replace(' ', '_').replace('(', '').replace(')', '')
+            filename = f"{timestamp}_{image_index}_{base_filename}.webp"
             storage_path = f"{self.storage_path}/{filename}"
             
-            # Set content type based on file extension
-            content_type_map = {
-                'jpg': 'image/jpeg',
-                'jpeg': 'image/jpeg',
-                'png': 'image/png',
-                'gif': 'image/gif',
-                'webp': 'image/webp'
-            }
-            content_type = content_type_map.get(file_extension, 'image/jpeg')
+            log_message(f"Upload path: {storage_path}")
             
-            # Use Firebase Storage public API without authentication for public uploads
-            # This approach works for public uploads to Firebase Storage
-            upload_url = f"https://firebasestorage.googleapis.com/v0/b/{self.bucket_name}/o"
+            if not self.initialized:
+                log_message("Firebase not initialized, skipping upload")
+                return None
+            
+            # Use Firebase Storage REST API with API key
+            upload_url = f"https://firebasestorage.googleapis.com/upload/storage/v1/b/{self.bucket_name}/o"
             
             # Parameters for the upload
             params = {
@@ -87,48 +126,48 @@ class FirebaseStorageManager:
                 'uploadType': 'media'
             }
             
+            if self.firebase_api_key:
+                params['key'] = self.firebase_api_key
+            
             # Headers for upload
             headers = {
-                'Content-Type': content_type,
+                'Content-Type': 'image/webp',
             }
             
-            print(f"Uploading to Firebase: {upload_url} with path: {storage_path}")
+            log_message(f"Uploading to Firebase Storage...")
+            log_message(f"URL: {upload_url}")
             
             # Upload the file
             response = requests.post(
                 upload_url,
                 headers=headers,
                 params=params,
-                data=uploaded_file.getvalue()
+                data=webp_data
             )
             
-            print(f"Firebase upload response: {response.status_code}")
+            log_message(f"Upload response status: {response.status_code}")
             
             if response.status_code in [200, 201]:
-                # Get the download URL
                 result = response.json()
-                print(f"Firebase response data: {result}")
+                log_message("✅ Upload successful!")
                 
                 # Get file name from response
                 file_name = result.get('name', storage_path)
                 
-                # Construct public URL using the standard Firebase Storage URL format
+                # Construct public URL
                 encoded_name = requests.utils.quote(file_name, safe='')
                 public_url = f"https://firebasestorage.googleapis.com/v0/b/{self.bucket_name}/o/{encoded_name}?alt=media"
                 
-                print(f"Image uploaded successfully to Firebase: {public_url}")
+                log_message(f"📂 Public URL: {public_url}")
                 return public_url
             else:
-                print(f"Failed to upload to Firebase: {response.status_code}")
-                print(f"Response text: {response.text}")
-                print(f"Request URL: {upload_url}")
-                print(f"Request params: {params}")
-                # Firebase permission denied - this means we need proper authentication
-                # For now, return None to fall back to local storage
+                log_message(f"❌ Upload failed: {response.status_code}")
+                log_message(f"Response: {response.text}")
                 return None
             
         except Exception as e:
-            print(f"Error uploading image to Firebase: {str(e)}")
+            error_msg = f"Error during upload: {str(e)}"
+            log_message(f"❌ {error_msg}")
             return None
     
     def upload_pil_image(self, pil_image: Image.Image, filename: str) -> Optional[str]:

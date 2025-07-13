@@ -84,6 +84,7 @@ Provide your analysis in JSON format with these exact fields:
 - "visual_elements": Key visual elements that helped with identification
 - "prompt": Detailed description that could be used by an AI image generator to recreate this image, including style, composition, lighting, historical period, clothing, architecture, and atmosphere
 - "celebrity": Boolean true if image contains a famous person with a Wikipedia page, false otherwise
+- "celebrity_name": If celebrity is true, provide the name(s) of the famous person(s), separated by commas if multiple
 
 Be as specific as possible about dates. If you can identify the exact date, provide it. Carefully analyze for signs of AI generation such as inconsistent details, impossible combinations, or artifacts."""
                         },
@@ -109,7 +110,7 @@ Be as specific as possible about dates. If you can identify the exact date, prov
 def validate_result(result):
     """Validate and clean the API response"""
     # Ensure all required fields are present
-    required_fields = ['title', 'event', 'description', 'location_name', 'year', 'exact_date', 'confidence', 'ai_generated_probability', 'prompt', 'celebrity']
+    required_fields = ['title', 'event', 'description', 'location_name', 'year', 'exact_date', 'confidence', 'ai_generated_probability', 'prompt', 'celebrity', 'celebrity_name']
     
     for field in required_fields:
         if field not in result:
@@ -162,7 +163,8 @@ def get_default_value(field):
         'ai_generated_probability': 0,
         'ai_analysis': 'Unable to determine if AI-generated',
         'prompt': 'Historical photograph with unidentified subjects and context',
-        'celebrity': False
+        'celebrity': False,
+        'celebrity_name': None
     }
     return defaults.get(field, 'Unknown')
 
@@ -179,7 +181,8 @@ def get_error_response(error_message):
         'ai_generated_probability': 0,
         'ai_analysis': 'Could not analyze due to error',
         'prompt': 'Error occurred during analysis',
-        'celebrity': False
+        'celebrity': False,
+        'celebrity_name': None
     }
 
 def get_gps_coordinates(location_name):
@@ -233,17 +236,25 @@ def generate_wikipedia_url(event_name, location=None):
         print(f"Error generating Wikipedia URL: {str(e)}")
         return None
 
-def save_image_and_get_url(uploaded_file, image_index, firebase_manager):
-    """Upload image to Firebase Storage and return URL"""
+def save_image_and_get_url(uploaded_file, image_index, firebase_manager, log_container=None):
+    """Upload optimized image to Firebase Storage and return URL"""
+    def log_message(message):
+        print(message)
+        if log_container:
+            log_container.write(f"🔄 {message}")
+    
     try:
+        log_message(f"Processing image {image_index}: {uploaded_file.name}")
+        
         # Try Firebase upload first
-        firebase_url = firebase_manager.upload_image(uploaded_file, image_index)
+        firebase_url = firebase_manager.upload_image(uploaded_file, image_index, log_container)
         
         if firebase_url:
+            log_message("✅ Image uploaded to Firebase Storage successfully")
             return firebase_url
         
         # Fallback to local storage if Firebase fails
-        print("Firebase upload failed, using local storage fallback")
+        log_message("⚠️ Firebase upload failed, using local storage fallback")
         import os
         uploads_dir = "uploaded_images"
         if not os.path.exists(uploads_dir):
@@ -260,38 +271,52 @@ def save_image_and_get_url(uploaded_file, image_index, firebase_manager):
         with open(filepath, "wb") as f:
             f.write(uploaded_file.getvalue())
         
-        # Return the relative URL path (this will be stored but not directly accessible via web)
+        log_message(f"📁 Saved locally: {filepath}")
         return f"local_storage://{filepath}"
         
     except Exception as e:
-        print(f"Error saving image: {str(e)}")
+        error_msg = f"Error saving image: {str(e)}"
+        log_message(f"❌ {error_msg}")
         return None
 
 def process_multiple_images(client, images, uploaded_files, db, firebase_manager):
     """Process multiple images and return results"""
     results = []
     
+    # Create log container
+    log_container = st.expander("📋 Processing Log", expanded=True)
+    
     for i, image in enumerate(images):
         st.write(f"🔍 Analyzing image {i+1} of {len(images)}...")
+        log_container.write(f"\n--- Processing Image {i+1}: {uploaded_files[i].name if i < len(uploaded_files) else f'image_{i+1}'} ---")
         
         try:
             # Save image and get URL
             image_url = None
             if i < len(uploaded_files):
-                image_url = save_image_and_get_url(uploaded_files[i], i+1, firebase_manager)
+                image_url = save_image_and_get_url(uploaded_files[i], i+1, firebase_manager, log_container)
                 if image_url:
-                    st.write(f"📤 Image uploaded: {image_url}")
+                    if image_url.startswith('https://'):
+                        st.write(f"📤 Image uploaded to Firebase: {image_url}")
+                    else:
+                        st.write(f"📁 Image stored locally: {image_url}")
             
             # Analyze the image
+            log_container.write("🤖 Starting AI analysis...")
             result = analyze_historical_image(client, image)
+            log_container.write("✅ AI analysis complete")
             
             # Get GPS coordinates if location is identified
             if result.get('location_name') and result['location_name'] != 'Unknown Location':
+                log_container.write(f"🗺️ Looking up GPS coordinates for: {result['location_name']}")
                 gps_coords = get_gps_coordinates(result['location_name'])
                 result['gps'] = gps_coords
+                if gps_coords:
+                    log_container.write(f"📍 GPS found: {gps_coords}")
             
             # Generate Wikipedia URL
             if result.get('event') and result['event'] != 'Unidentified Historical Event':
+                log_container.write(f"🔗 Generating Wikipedia URLs for: {result['event']}")
                 wiki_info = generate_wikipedia_url(result['event'], result.get('location_name'))
                 result['wikipedia'] = wiki_info
             
@@ -300,12 +325,15 @@ def process_multiple_images(client, images, uploaded_files, db, firebase_manager
             
             # Save to database
             image_name = uploaded_files[i].name if i < len(uploaded_files) else f"image_{i+1}"
+            log_container.write(f"💾 Saving to Supabase database...")
             db_id = db.save_analysis_result(result, image_name, image_url)
             if db_id:
                 result['database_id'] = db_id
                 st.write(f"✅ Saved to database (ID: {db_id})")
+                log_container.write(f"✅ Database record created with ID: {db_id}")
             else:
                 st.write("⚠️ Database save failed - check logs")
+                log_container.write("❌ Database save failed")
             
             results.append(result)
             
@@ -313,6 +341,7 @@ def process_multiple_images(client, images, uploaded_files, db, firebase_manager
             error_result = get_error_response(str(e))
             error_result['image_index'] = i + 1
             results.append(error_result)
+            log_container.write(f"❌ Error processing image {i+1}: {str(e)}")
     
     return results
 
@@ -383,7 +412,7 @@ def analyze_images_page(client, db, firebase_manager):
                 images.append(image)
                 
                 with cols[i % 3]:
-                    st.image(image, caption=f"Image {i+1}: {uploaded_file.name}", use_column_width=True)
+                    st.image(image, caption=f"Image {i+1}: {uploaded_file.name}", use_container_width=True)
             except Exception as e:
                 st.error(f"Error loading {uploaded_file.name}: {str(e)}")
         
@@ -398,51 +427,112 @@ def analyze_images_page(client, db, firebase_manager):
                 
                 st.success(f"✅ Analysis complete for {len(all_results)} images!")
                 
-                # Display results for each image
+                # Display results in a comprehensive table
+                st.subheader("📊 Complete Analysis Results")
+                
+                # Prepare data for the table
+                table_data = []
                 for result in all_results:
-                    st.subheader(f"📊 Analysis Results - Image {result['image_index']}")
-                    
-                    # Create columns for main results
-                    col_a, col_b = st.columns([2, 1])
-                    
-                    with col_a:
-                        st.markdown(f"**Title:** {result.get('title', 'Unknown')}")
-                        st.markdown(f"**Event:** {result.get('event', 'Unknown')}")
-                        st.markdown(f"**Description:** {result.get('description', 'No description available')}")
-                        st.markdown(f"**Year:** {result.get('year', 'Unknown')}")
-                        if result.get('exact_date') and result['exact_date'] != 'Unknown':
-                            st.markdown(f"**Exact Date:** {result['exact_date']}")
-                        st.markdown(f"**Location:** {result.get('location_name', 'Unknown')}")
+                    row = {
+                        "Image": f"Image {result['image_index']}",
+                        "Title": result.get('title', 'Unknown'),
+                        "Event": result.get('event', 'Unknown'),
+                        "Year": result.get('year', 'Unknown'),
+                        "Date": result.get('exact_date', 'Unknown'),
+                        "Location": result.get('location_name', 'Unknown'),
+                        "Celebrity": "✅ Yes" if result.get('celebrity') else "❌ No",
+                        "Celebrity Names": result.get('celebrity_name', 'None'),
+                        "AI Generated": f"{result.get('ai_generated_probability', 0)}%",
+                        "Database ID": result.get('database_id', 'N/A'),
+                        "Image URL": result.get('image_url', 'N/A')
+                    }
+                    table_data.append(row)
+                
+                # Display the table
+                import pandas as pd
+                df = pd.DataFrame(table_data)
+                st.dataframe(df, use_container_width=True)
+                
+                # Display detailed results for each image
+                st.subheader("📋 Detailed Analysis Results")
+                for result in all_results:
+                    with st.expander(f"Image {result['image_index']}: {result.get('title', 'Unknown')}", expanded=False):
                         
-                        if result.get('gps'):
-                            gps = result['gps']
-                            st.markdown(f"**GPS Coordinates:** {gps[0]:.4f}, {gps[1]:.4f}")
+                        # Create columns for main results
+                        col_a, col_b = st.columns([2, 1])
                         
-                        if result.get('database_id'):
-                            st.markdown(f"**Database ID:** {result['database_id']}")
+                        with col_a:
+                            st.markdown(f"**Event:** {result.get('event', 'Unknown')}")
+                            st.markdown(f"**Description:** {result.get('description', 'No description available')}")
+                            st.markdown(f"**Year:** {result.get('year', 'Unknown')}")
+                            if result.get('exact_date') and result['exact_date'] != 'Unknown':
+                                st.markdown(f"**Exact Date:** {result['exact_date']}")
+                            st.markdown(f"**Location:** {result.get('location_name', 'Unknown')}")
+                            
+                            if result.get('gps'):
+                                gps = result['gps']
+                                st.markdown(f"**GPS Coordinates:** {gps[0]:.4f}, {gps[1]:.4f}")
+                            
+                            # Celebrity information
+                            if result.get('celebrity'):
+                                st.markdown(f"**Celebrity Detected:** ✅ Yes")
+                                if result.get('celebrity_name'):
+                                    st.markdown(f"**Celebrity Names:** {result['celebrity_name']}")
+                            else:
+                                st.markdown(f"**Celebrity Detected:** ❌ No")
+                            
+                            # AI Generation Prompt
+                            if result.get('prompt'):
+                                st.markdown("**AI Recreation Prompt:**")
+                                st.text_area("", value=result['prompt'], height=100, key=f"prompt_{result['image_index']}")
+                            
+                            if result.get('database_id'):
+                                st.markdown(f"**Database ID:** {result['database_id']}")
+                            
+                            if result.get('image_url'):
+                                st.markdown(f"**Image URL:** {result['image_url']}")
+                                
+                            # Wikipedia links
+                            if result.get('wikipedia'):
+                                wiki = result['wikipedia']
+                                st.markdown("**Wikipedia Links:**")
+                                st.markdown(f"[Search Wikipedia]({wiki.get('search_url', '#')})")
+                                st.markdown(f"[Direct Article]({wiki.get('direct_url', '#')})")
                         
-                        if result.get('image_url'):
-                            st.markdown(f"**Image URL:** {result['image_url']}")
-                    
-                    with col_b:
-                        # AI Generation Assessment
-                        ai_prob = result.get('ai_generated_probability', 0)
-                        if ai_prob > 70:
-                            st.error(f"🤖 Likely AI-Generated: {ai_prob}%")
-                        elif ai_prob > 30:
-                            st.warning(f"🤔 Possibly AI-Generated: {ai_prob}%")
-                        else:
-                            st.success(f"📸 Likely Authentic: {100-ai_prob}% confidence")
-                        
-                        # Confidence scores
-                        if result.get('confidence'):
-                            st.markdown("**Confidence Scores:**")
-                            confidence = result['confidence']
-                            st.metric("Year", f"{confidence.get('year', 0)}%")
-                            st.metric("Location", f"{confidence.get('location', 0)}%")
-                            st.metric("Event", f"{confidence.get('event', 0)}%")
-                            if confidence.get('exact_date', 0) > 0:
-                                st.metric("Exact Date", f"{confidence.get('exact_date', 0)}%")
+                        with col_b:
+                            # AI Generation Assessment
+                            ai_prob = result.get('ai_generated_probability', 0)
+                            if ai_prob > 70:
+                                st.error(f"🤖 Likely AI-Generated: {ai_prob}%")
+                            elif ai_prob > 30:
+                                st.warning(f"🤔 Possibly AI-Generated: {ai_prob}%")
+                            else:
+                                st.success(f"📸 Likely Authentic: {100-ai_prob}% confidence")
+                            
+                            # Confidence scores
+                            if result.get('confidence'):
+                                st.markdown("**Confidence Scores:**")
+                                confidence = result['confidence']
+                                st.metric("Year", f"{confidence.get('year', 0)}%")
+                                st.metric("Location", f"{confidence.get('location', 0)}%")
+                                st.metric("Event", f"{confidence.get('event', 0)}%")
+                                if confidence.get('exact_date', 0) > 0:
+                                    st.metric("Exact Date", f"{confidence.get('exact_date', 0)}%")
+                                    
+                            # Text extraction
+                            if result.get('extracted_text') and result['extracted_text'] != 'No visible text detected':
+                                st.markdown("**Extracted Text:**")
+                                st.code(result['extracted_text'])
+                                
+                            # Visual elements
+                            if result.get('visual_elements'):
+                                st.markdown("**Visual Elements:**")
+                                elements = result['visual_elements']
+                                if isinstance(elements, list):
+                                    for element in elements:
+                                        st.markdown(f"• {element}")
+                                else:
+                                    st.markdown(elements)
                     
                     # Wikipedia integration
                     if result.get('wikipedia'):

@@ -62,6 +62,7 @@ class SupabaseManager:
         print("- image_url (text)")
         print("- prompt (text)")
         print("- celebrity (boolean, default false)")
+        print("- celebrity_name (text)")
         print("- raw_result (jsonb)")
         print("- created_at (timestamp with time zone, default now())")
     
@@ -103,6 +104,7 @@ class SupabaseManager:
                 'image_url': image_url,
                 'prompt': result.get('prompt'),
                 'celebrity': result.get('celebrity', False),
+                'celebrity_name': result.get('celebrity_name'),
                 'raw_result': result,
                 'created_at': datetime.now().isoformat()
             }
