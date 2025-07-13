@@ -4,6 +4,8 @@ from PIL import Image
 import io
 import base64
 import os
+import requests
+import urllib.parse
 from openai import OpenAI
 
 # Initialize OpenAI client
@@ -52,6 +54,7 @@ Always respond with valid JSON containing all required fields. Be specific about
 - Event type (political, military, social, cultural)
 - Historical context and significance
 - Any visible text or signs
+- Signs that this might be an AI-generated image vs authentic historical photo
 
 Provide your analysis in JSON format with these exact fields:
 - "title": Brief, specific title of the event
@@ -59,11 +62,14 @@ Provide your analysis in JSON format with these exact fields:
 - "description": 3-4 sentence detailed description of what's happening
 - "location_name": Precise location (e.g., "Brandenburg Gate, Berlin, Germany")
 - "year": Year when this occurred (numeric)
-- "confidence": Object with "year", "location", and "event" scores (0-100)
+- "exact_date": Specific date if determinable (YYYY-MM-DD format, or "Unknown")
+- "confidence": Object with "year", "location", "event", and "exact_date" scores (0-100)
+- "ai_generated_probability": Percentage likelihood this is AI-generated (0-100)
+- "ai_analysis": Explanation of AI generation assessment
 - "extracted_text": Any visible text you can see in the image
 - "visual_elements": Key visual elements that helped with identification
 
-Be as specific as possible. If you can't identify the exact event, provide the most likely historical context based on the evidence."""
+Be as specific as possible about dates. If you can identify the exact date, provide it. Carefully analyze for signs of AI generation such as inconsistent details, impossible combinations, or artifacts."""
                         },
                         {
                             "type": "image_url",
@@ -87,7 +93,7 @@ Be as specific as possible. If you can't identify the exact event, provide the m
 def validate_result(result):
     """Validate and clean the API response"""
     # Ensure all required fields are present
-    required_fields = ['title', 'event', 'description', 'location_name', 'year', 'confidence']
+    required_fields = ['title', 'event', 'description', 'location_name', 'year', 'exact_date', 'confidence', 'ai_generated_probability']
     
     for field in required_fields:
         if field not in result:
@@ -96,14 +102,14 @@ def validate_result(result):
     # Validate confidence scores
     if 'confidence' in result and isinstance(result['confidence'], dict):
         confidence = result['confidence']
-        for score_type in ['year', 'location', 'event']:
+        for score_type in ['year', 'location', 'event', 'exact_date']:
             if score_type not in confidence:
                 confidence[score_type] = 50
             else:
                 # Ensure confidence is between 0-100
                 confidence[score_type] = max(0, min(100, int(confidence[score_type])))
     else:
-        result['confidence'] = {'year': 50, 'location': 50, 'event': 50}
+        result['confidence'] = {'year': 50, 'location': 50, 'event': 50, 'exact_date': 0}
     
     # Validate year
     if 'year' in result:
@@ -117,6 +123,14 @@ def validate_result(result):
         except:
             result['year'] = "Unknown"
     
+    # Validate AI generation probability
+    if 'ai_generated_probability' in result:
+        try:
+            ai_prob = int(result['ai_generated_probability'])
+            result['ai_generated_probability'] = max(0, min(100, ai_prob))
+        except:
+            result['ai_generated_probability'] = 0
+    
     return result
 
 def get_default_value(field):
@@ -127,7 +141,10 @@ def get_default_value(field):
         'description': 'Unable to determine specific historical event from available evidence.',
         'location_name': 'Unknown Location',
         'year': 'Unknown',
-        'confidence': {'year': 0, 'location': 0, 'event': 0}
+        'exact_date': 'Unknown',
+        'confidence': {'year': 0, 'location': 0, 'event': 0, 'exact_date': 0},
+        'ai_generated_probability': 0,
+        'ai_analysis': 'Unable to determine if AI-generated'
     }
     return defaults.get(field, 'Unknown')
 
@@ -139,7 +156,10 @@ def get_error_response(error_message):
         'description': f'Error occurred during historical analysis: {error_message}',
         'location_name': 'Unknown',
         'year': 'Unknown',
-        'confidence': {'year': 0, 'location': 0, 'event': 0}
+        'exact_date': 'Unknown',
+        'confidence': {'year': 0, 'location': 0, 'event': 0, 'exact_date': 0},
+        'ai_generated_probability': 0,
+        'ai_analysis': 'Could not analyze due to error'
     }
 
 def get_gps_coordinates(location_name):
@@ -163,6 +183,67 @@ def get_gps_coordinates(location_name):
     
     return None
 
+def generate_wikipedia_url(event_name, location=None):
+    """Generate Wikipedia search URL for the historical event"""
+    try:
+        # Create search terms
+        search_terms = [event_name]
+        if location:
+            search_terms.append(f"{event_name} {location}")
+        
+        # Try the most specific search term first
+        search_term = search_terms[-1] if len(search_terms) > 1 else search_terms[0]
+        
+        # Create Wikipedia search URL
+        encoded_term = urllib.parse.quote(search_term)
+        search_url = f"https://en.wikipedia.org/wiki/Special:Search?search={encoded_term}"
+        
+        # Also try direct article URL (replace spaces with underscores)
+        article_title = search_term.replace(' ', '_')
+        article_url = f"https://en.wikipedia.org/wiki/{urllib.parse.quote(article_title)}"
+        
+        return {
+            'title': f"Wikipedia: {search_term}",
+            'search_url': search_url,
+            'direct_url': article_url,
+            'summary': f"Search Wikipedia for information about {search_term}"
+        }
+        
+    except Exception as e:
+        print(f"Error generating Wikipedia URL: {str(e)}")
+        return None
+
+def process_multiple_images(client, images):
+    """Process multiple images and return results"""
+    results = []
+    
+    for i, image in enumerate(images):
+        st.write(f"🔍 Analyzing image {i+1} of {len(images)}...")
+        
+        try:
+            # Analyze the image
+            result = analyze_historical_image(client, image)
+            
+            # Get GPS coordinates if location is identified
+            if result.get('location_name') and result['location_name'] != 'Unknown Location':
+                gps_coords = get_gps_coordinates(result['location_name'])
+                result['gps'] = gps_coords
+            
+            # Generate Wikipedia URL
+            if result.get('event') and result['event'] != 'Unidentified Historical Event':
+                wiki_info = generate_wikipedia_url(result['event'], result.get('location_name'))
+                result['wikipedia'] = wiki_info
+            
+            result['image_index'] = i + 1
+            results.append(result)
+            
+        except Exception as e:
+            error_result = get_error_response(str(e))
+            error_result['image_index'] = i + 1
+            results.append(error_result)
+    
+    return results
+
 def main():
     st.set_page_config(
         page_title="Historical Image Analysis Pipeline",
@@ -183,121 +264,161 @@ def main():
     else:
         st.success("✅ OpenAI client initialized successfully!")
     
-    # File upload
-    uploaded_file = st.file_uploader(
-        "Choose a historical image...",
-        type=['jpg', 'jpeg', 'png'],
-        help="Upload JPG, JPEG, or PNG images"
+    # File upload - Multiple files
+    uploaded_files = st.file_uploader(
+        "Choose historical images...",
+        type=['jpg', 'jpeg', 'png', 'webp'],
+        help="Upload JPG, JPEG, PNG, or WebP images",
+        accept_multiple_files=True
     )
     
-    if uploaded_file is not None:
-        # Display uploaded image
-        col1, col2 = st.columns([1, 1])
+    if uploaded_files:
+        st.subheader(f"📷 Uploaded Images ({len(uploaded_files)} files)")
         
-        with col1:
-            st.subheader("📷 Uploaded Image")
-            image = Image.open(uploaded_file)
-            st.image(image, caption="Original Image", use_column_width=True)
+        # Display uploaded images in a grid
+        cols = st.columns(min(3, len(uploaded_files)))
+        images = []
         
-        with col2:
-            st.subheader("🔄 Processing Status")
-            
-            # Process button
-            if st.button("🚀 Analyze Historical Image", type="primary"):
-                try:
-                    with st.spinner("Analyzing image with AI..."):
-                        st.write("🧠 Processing image through GPT-4o Vision...")
-                        historical_result = analyze_historical_image(client, image)
-                        
-                        # Get GPS coordinates if location is identified
-                        if historical_result.get('location_name') and historical_result['location_name'] != 'Unknown Location':
-                            st.write("🌍 Looking up GPS coordinates...")
-                            gps_coords = get_gps_coordinates(historical_result['location_name'])
-                            historical_result['gps'] = gps_coords
+        for i, uploaded_file in enumerate(uploaded_files):
+            try:
+                image = Image.open(uploaded_file)
+                # Convert WebP to RGB if needed
+                if image.format == 'WEBP' or image.mode != 'RGB':
+                    image = image.convert('RGB')
+                images.append(image)
+                
+                with cols[i % 3]:
+                    st.image(image, caption=f"Image {i+1}: {uploaded_file.name}", use_column_width=True)
+            except Exception as e:
+                st.error(f"Error loading {uploaded_file.name}: {str(e)}")
+        
+        st.subheader("🔄 Processing Controls")
+        
+        # Process button
+        if st.button("🚀 Analyze All Historical Images", type="primary"):
+            try:
+                with st.spinner("Analyzing images with AI..."):
+                    # Process all images
+                    all_results = process_multiple_images(client, images)
+                
+                st.success(f"✅ Analysis complete for {len(all_results)} images!")
+                
+                # Display results for each image
+                for result in all_results:
+                    st.subheader(f"📊 Analysis Results - Image {result['image_index']}")
                     
-                    st.success("✅ Analysis complete!")
-                    
-                    # Display results
-                    st.subheader("📊 Analysis Results")
-                    
-                    # Main event card
-                    st.markdown("### 🏛️ Historical Event Identified")
-                    
+                    # Create columns for main results
                     col_a, col_b = st.columns([2, 1])
                     
                     with col_a:
-                        st.markdown(f"**Title:** {historical_result.get('title', 'Unknown')}")
-                        st.markdown(f"**Event:** {historical_result.get('event', 'Unknown')}")
-                        st.markdown(f"**Description:** {historical_result.get('description', 'No description available')}")
-                        st.markdown(f"**Year:** {historical_result.get('year', 'Unknown')}")
-                        st.markdown(f"**Location:** {historical_result.get('location_name', 'Unknown')}")
+                        st.markdown(f"**Title:** {result.get('title', 'Unknown')}")
+                        st.markdown(f"**Event:** {result.get('event', 'Unknown')}")
+                        st.markdown(f"**Description:** {result.get('description', 'No description available')}")
+                        st.markdown(f"**Year:** {result.get('year', 'Unknown')}")
+                        if result.get('exact_date') and result['exact_date'] != 'Unknown':
+                            st.markdown(f"**Exact Date:** {result['exact_date']}")
+                        st.markdown(f"**Location:** {result.get('location_name', 'Unknown')}")
                         
-                        if historical_result.get('gps'):
-                            gps = historical_result['gps']
+                        if result.get('gps'):
+                            gps = result['gps']
                             st.markdown(f"**GPS Coordinates:** {gps[0]:.4f}, {gps[1]:.4f}")
                     
                     with col_b:
-                        if historical_result.get('confidence'):
+                        # AI Generation Assessment
+                        ai_prob = result.get('ai_generated_probability', 0)
+                        if ai_prob > 70:
+                            st.error(f"🤖 Likely AI-Generated: {ai_prob}%")
+                        elif ai_prob > 30:
+                            st.warning(f"🤔 Possibly AI-Generated: {ai_prob}%")
+                        else:
+                            st.success(f"📸 Likely Authentic: {100-ai_prob}% confidence")
+                        
+                        # Confidence scores
+                        if result.get('confidence'):
                             st.markdown("**Confidence Scores:**")
-                            confidence = historical_result['confidence']
+                            confidence = result['confidence']
                             st.metric("Year", f"{confidence.get('year', 0)}%")
                             st.metric("Location", f"{confidence.get('location', 0)}%")
                             st.metric("Event", f"{confidence.get('event', 0)}%")
+                            if confidence.get('exact_date', 0) > 0:
+                                st.metric("Exact Date", f"{confidence.get('exact_date', 0)}%")
+                    
+                    # Wikipedia integration
+                    if result.get('wikipedia'):
+                        with st.expander("📖 Wikipedia Resources"):
+                            wiki = result['wikipedia']
+                            st.markdown(f"**Search Results:** [Wikipedia Search]({wiki['search_url']})")
+                            st.markdown(f"**Direct Article:** [Wikipedia Article]({wiki['direct_url']})")
+                            st.write(wiki['summary'])
                     
                     # Detailed analysis in expandable sections
                     with st.expander("📝 Extracted Text"):
-                        if historical_result.get('extracted_text'):
-                            st.text(historical_result['extracted_text'])
+                        if result.get('extracted_text'):
+                            st.text(result['extracted_text'])
                         else:
                             st.write("No text detected in the image.")
                     
                     with st.expander("👁️ Visual Elements"):
-                        if historical_result.get('visual_elements'):
-                            if isinstance(historical_result['visual_elements'], list):
-                                for element in historical_result['visual_elements']:
+                        if result.get('visual_elements'):
+                            if isinstance(result['visual_elements'], list):
+                                for element in result['visual_elements']:
                                     st.write(f"- {element}")
                             else:
-                                st.write(historical_result['visual_elements'])
+                                st.write(result['visual_elements'])
                         else:
                             st.write("No specific visual elements identified.")
                     
+                    with st.expander("🤖 AI Generation Analysis"):
+                        if result.get('ai_analysis'):
+                            st.write(result['ai_analysis'])
+                        else:
+                            st.write("No AI generation analysis available.")
+                    
                     with st.expander("📄 Raw JSON Output"):
                         final_output = {
-                            "title": historical_result.get('title'),
-                            "description": historical_result.get('description'),
-                            "location_name": historical_result.get('location_name'),
-                            "gps": historical_result.get('gps'),
-                            "year": historical_result.get('year'),
-                            "event": historical_result.get('event'),
-                            "confidence": historical_result.get('confidence', {})
+                            "image_index": result.get('image_index'),
+                            "title": result.get('title'),
+                            "description": result.get('description'),
+                            "location_name": result.get('location_name'),
+                            "gps": result.get('gps'),
+                            "year": result.get('year'),
+                            "exact_date": result.get('exact_date'),
+                            "event": result.get('event'),
+                            "confidence": result.get('confidence', {}),
+                            "ai_generated_probability": result.get('ai_generated_probability'),
+                            "wikipedia": result.get('wikipedia')
                         }
                         st.json(final_output)
-                        
-                        # Download button for JSON
-                        json_str = json.dumps(final_output, indent=2)
-                        st.download_button(
-                            label="📥 Download JSON Result",
-                            data=json_str,
-                            file_name="historical_analysis.json",
-                            mime="application/json"
-                        )
+                    
+                    st.markdown("---")  # Separator between results
                 
-                except Exception as e:
-                    st.error(f"❌ Error during analysis: {str(e)}")
-                    st.exception(e)
+                # Download all results as JSON
+                all_results_json = json.dumps(all_results, indent=2)
+                st.download_button(
+                    label="📥 Download All Results (JSON)",
+                    data=all_results_json,
+                    file_name="historical_analysis_batch.json",
+                    mime="application/json"
+                )
+                
+            except Exception as e:
+                st.error(f"❌ Error during analysis: {str(e)}")
+                st.exception(e)
     
     # Information section
     st.markdown("---")
     st.markdown("### ℹ️ How it works")
     st.markdown("""
-    This AI system performs the following analysis:
-    1. **Image Analysis**: Uses OpenAI's GPT-4o Vision to analyze the complete image
-    2. **Historical Identification**: Identifies specific historical events based on visual clues
-    3. **Text Extraction**: Detects any visible text or signs in the image
-    4. **Visual Element Analysis**: Identifies key objects, people, and contextual elements
-    5. **Location & Date Inference**: Determines when and where the event occurred
-    6. **Confidence Assessment**: Provides accuracy scores for different aspects of the analysis
-    7. **GPS Lookup**: Converts location names to coordinates when possible
+    This enhanced AI system performs the following analysis:
+    1. **Multiple Image Support**: Upload and analyze several images at once (JPG, PNG, WebP)
+    2. **Advanced Image Analysis**: Uses OpenAI's GPT-4o Vision for comprehensive analysis
+    3. **Historical Event Identification**: Identifies specific events with exact dates when possible
+    4. **AI Generation Detection**: Assesses likelihood that images are AI-generated vs authentic
+    5. **Wikipedia Integration**: Automatically finds related Wikipedia articles for identified events
+    6. **Text & Visual Analysis**: Extracts text and identifies key visual elements
+    7. **Location & GPS Lookup**: Determines precise locations with GPS coordinates
+    8. **Confidence Scoring**: Provides accuracy assessments for all analysis aspects
+    9. **Batch Processing**: Download complete analysis results for all images as JSON
     """)
 
 if __name__ == "__main__":

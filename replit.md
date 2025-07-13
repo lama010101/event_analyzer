@@ -2,11 +2,21 @@
 
 ## Overview
 
-This is a Streamlit-based AI application that analyzes historical images to identify and describe historical events. The system uses multiple AI models in a pipeline to extract information from images including text detection, visual captioning, object detection, and historical inference using OpenAI's GPT-4o model.
+This is an enhanced Streamlit-based AI application that analyzes historical images to identify and describe historical events. The system now supports multiple image uploads, WebP format, and provides advanced features including exact date detection, AI generation probability assessment, and Wikipedia URL integration.
 
 ## User Preferences
 
 Preferred communication style: Simple, everyday language.
+
+## Recent Changes (July 2025)
+
+- Enhanced to support multiple image uploads simultaneously
+- Added WebP format support alongside JPG, PNG, JPEG
+- Integrated exact date detection with confidence scoring
+- Added AI-generated image detection capability
+- Implemented Wikipedia URL generation for identified events
+- Simplified architecture to use OpenAI GPT-4o Vision as primary analysis engine
+- Added batch processing and JSON export for multiple images
 
 ## System Architecture
 
