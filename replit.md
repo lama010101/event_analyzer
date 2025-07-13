@@ -17,6 +17,13 @@ Preferred communication style: Simple, everyday language.
 - Implemented Wikipedia URL generation for identified events
 - Simplified architecture to use OpenAI GPT-4o Vision as primary analysis engine
 - Added batch processing and JSON export for multiple images
+- **Added comprehensive database functionality:**
+  - PostgreSQL database integration with SQLite fallback
+  - Automatic storage of all analysis results
+  - Analysis history browsing with 50 most recent results
+  - Search functionality across events, titles, and locations
+  - Database statistics with visual charts by historical year
+  - Full result retrieval by database ID
 
 ## System Architecture
 
@@ -39,25 +46,36 @@ The application follows a modular pipeline architecture where each component han
 
 ### Supporting Components
 
+- **DatabaseManager**: Handles PostgreSQL/SQLite database operations for storing and retrieving analysis results
 - **Utils**: Geographic utilities for location name to GPS coordinate conversion using geopy
-- **App.py**: Main Streamlit application orchestrating the pipeline
+- **App.py**: Main Streamlit application orchestrating the pipeline with multi-page navigation
 
 ## Data Flow
 
-1. **Image Upload**: User uploads image through Streamlit interface
-2. **Preprocessing**: Image is resized to 1024px width and optimized
-3. **Parallel Analysis**:
-   - OCR text extraction
-   - Visual captioning
-   - Object detection
-4. **Historical Inference**: All extracted data is fed to GPT-4o for event identification
-5. **Result Display**: Structured historical event information returned to user
+1. **Image Upload**: User uploads images through Streamlit interface (supports multiple files and WebP format)
+2. **Preprocessing**: Images are resized to 1024px width and optimized
+3. **AI Analysis**: Direct analysis using OpenAI GPT-4o Vision model for comprehensive historical inference
+4. **Data Enhancement**:
+   - GPS coordinate conversion for identified locations
+   - Wikipedia URL generation for events
+   - Confidence scoring for all identified elements
+5. **Database Storage**: All results automatically saved to PostgreSQL (or SQLite fallback)
+6. **Result Display**: Structured historical event information with database management features
 
 The pipeline returns:
-- Event title and description
-- Date/year of event
+- Event title and description with confidence scores
+- Exact dates (when determinable) and historical year
 - Location name and GPS coordinates
-- Confidence scores for accuracy assessment
+- AI-generation probability assessment
+- Wikipedia search and direct article links
+- Database record ID for future reference
+
+## Navigation Pages
+
+1. **Analyze Images**: Main analysis interface with batch processing
+2. **Analysis History**: Browse 50 most recent analysis results
+3. **Search Results**: Search database by event, title, or location
+4. **Database Statistics**: Visual charts and statistics overview
 
 ## External Dependencies
 

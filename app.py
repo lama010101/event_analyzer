@@ -7,6 +7,7 @@ import os
 import requests
 import urllib.parse
 from openai import OpenAI
+from database import DatabaseManager
 
 # Initialize OpenAI client
 @st.cache_resource
@@ -16,6 +17,12 @@ def get_openai_client():
     if not api_key:
         return None
     return OpenAI(api_key=api_key)
+
+# Initialize database
+@st.cache_resource
+def get_database():
+    """Initialize database connection"""
+    return DatabaseManager()
 
 def image_to_base64(image):
     """Convert PIL Image to base64 string"""
@@ -213,7 +220,7 @@ def generate_wikipedia_url(event_name, location=None):
         print(f"Error generating Wikipedia URL: {str(e)}")
         return None
 
-def process_multiple_images(client, images):
+def process_multiple_images(client, images, uploaded_files, db):
     """Process multiple images and return results"""
     results = []
     
@@ -235,6 +242,14 @@ def process_multiple_images(client, images):
                 result['wikipedia'] = wiki_info
             
             result['image_index'] = i + 1
+            
+            # Save to database
+            image_name = uploaded_files[i].name if i < len(uploaded_files) else f"image_{i+1}"
+            db_id = db.save_analysis_result(result, image_name)
+            if db_id:
+                result['database_id'] = db_id
+                st.write(f"✅ Saved to database (ID: {db_id})")
+            
             results.append(result)
             
         except Exception as e:
@@ -252,17 +267,39 @@ def main():
     )
     
     st.title("🏛️ Historical Image Analysis Pipeline")
-    st.markdown("Upload a historical image to extract detailed event information including title, description, date, location, and GPS coordinates.")
+    st.markdown("Upload historical images to extract detailed event information including title, description, date, location, and GPS coordinates. All results are saved to the database for future reference.")
     
-    # Initialize OpenAI client
+    # Initialize OpenAI client and database
     client = get_openai_client()
+    db = get_database()
     
     if client is None:
         st.error("❌ OpenAI API key not found. Please add your OPENAI_API_KEY to continue.")
         st.info("Go to https://platform.openai.com/api-keys to get your API key.")
         st.stop()
     else:
-        st.success("✅ OpenAI client initialized successfully!")
+        st.success("✅ OpenAI client and database initialized successfully!")
+    
+    # Sidebar for navigation
+    st.sidebar.title("📊 Navigation")
+    page = st.sidebar.selectbox("Choose a page:", [
+        "🔍 Analyze Images", 
+        "📚 Analysis History", 
+        "🔎 Search Results", 
+        "📈 Database Statistics"
+    ])
+    
+    if page == "🔍 Analyze Images":
+        analyze_images_page(client, db)
+    elif page == "📚 Analysis History":
+        history_page(db)
+    elif page == "🔎 Search Results":
+        search_page(db)
+    elif page == "📈 Database Statistics":
+        statistics_page(db)
+
+def analyze_images_page(client, db):
+    """Main image analysis page"""
     
     # File upload - Multiple files
     uploaded_files = st.file_uploader(
@@ -299,7 +336,7 @@ def main():
             try:
                 with st.spinner("Analyzing images with AI..."):
                     # Process all images
-                    all_results = process_multiple_images(client, images)
+                    all_results = process_multiple_images(client, images, uploaded_files, db)
                 
                 st.success(f"✅ Analysis complete for {len(all_results)} images!")
                 
@@ -322,6 +359,9 @@ def main():
                         if result.get('gps'):
                             gps = result['gps']
                             st.markdown(f"**GPS Coordinates:** {gps[0]:.4f}, {gps[1]:.4f}")
+                        
+                        if result.get('database_id'):
+                            st.markdown(f"**Database ID:** {result['database_id']}")
                     
                     with col_b:
                         # AI Generation Assessment
@@ -404,6 +444,155 @@ def main():
             except Exception as e:
                 st.error(f"❌ Error during analysis: {str(e)}")
                 st.exception(e)
+
+def history_page(db):
+    """Display analysis history page"""
+    st.header("📚 Analysis History")
+    st.write("View your recent historical image analysis results.")
+    
+    # Get recent history
+    history = db.get_analysis_history(50)
+    
+    if not history:
+        st.info("No analysis history found. Analyze some images first!")
+        return
+    
+    st.write(f"Showing {len(history)} recent analyses:")
+    
+    # Display history in a table-like format
+    for item in history:
+        with st.expander(f"{item['title']} - {item['event']} ({item['year']})"):
+            col1, col2 = st.columns([2, 1])
+            
+            with col1:
+                st.write(f"**Image:** {item['image_name']}")
+                st.write(f"**Event:** {item['event']}")
+                st.write(f"**Location:** {item['location_name']}")
+                st.write(f"**Year:** {item['year']}")
+                if item['exact_date'] and item['exact_date'] != 'Unknown':
+                    st.write(f"**Exact Date:** {item['exact_date']}")
+            
+            with col2:
+                st.write(f"**Analyzed:** {item['created_at']}")
+                if item['ai_generated_probability'] is not None:
+                    if item['ai_generated_probability'] > 70:
+                        st.error(f"🤖 Likely AI-Generated: {item['ai_generated_probability']}%")
+                    elif item['ai_generated_probability'] > 30:
+                        st.warning(f"🤔 Possibly AI-Generated: {item['ai_generated_probability']}%")
+                    else:
+                        st.success(f"📸 Likely Authentic: {100-item['ai_generated_probability']}%")
+                
+                # View full details button
+                if st.button(f"View Details", key=f"view_{item['id']}"):
+                    full_result = db.get_analysis_by_id(item['id'])
+                    if full_result:
+                        st.json(full_result)
+
+def search_page(db):
+    """Search analysis results page"""
+    st.header("🔎 Search Analysis Results")
+    st.write("Search through your historical image analysis database.")
+    
+    # Search input
+    search_query = st.text_input("Search by event, title, or location:", placeholder="e.g., Berlin Wall, World War, protests")
+    
+    if search_query:
+        results = db.search_analysis_results(search_query, 20)
+        
+        if results:
+            st.write(f"Found {len(results)} results for '{search_query}':")
+            
+            # Display search results
+            for item in results:
+                with st.expander(f"{item['title']} - {item['event']} ({item['year']})"):
+                    col1, col2 = st.columns([2, 1])
+                    
+                    with col1:
+                        st.write(f"**Image:** {item['image_name']}")
+                        st.write(f"**Event:** {item['event']}")
+                        st.write(f"**Location:** {item['location_name']}")
+                        st.write(f"**Year:** {item['year']}")
+                        if item['exact_date'] and item['exact_date'] != 'Unknown':
+                            st.write(f"**Exact Date:** {item['exact_date']}")
+                    
+                    with col2:
+                        st.write(f"**Analyzed:** {item['created_at']}")
+                        if item['ai_generated_probability'] is not None:
+                            if item['ai_generated_probability'] > 70:
+                                st.error(f"🤖 Likely AI-Generated: {item['ai_generated_probability']}%")
+                            elif item['ai_generated_probability'] > 30:
+                                st.warning(f"🤔 Possibly AI-Generated: {item['ai_generated_probability']}%")
+                            else:
+                                st.success(f"📸 Likely Authentic: {100-item['ai_generated_probability']}%")
+                        
+                        # View full details button
+                        if st.button(f"View Details", key=f"search_view_{item['id']}"):
+                            full_result = db.get_analysis_by_id(item['id'])
+                            if full_result:
+                                st.json(full_result)
+        else:
+            st.info(f"No results found for '{search_query}'. Try different keywords.")
+    else:
+        st.info("Enter a search term to find analysis results.")
+
+def statistics_page(db):
+    """Display database statistics page"""
+    st.header("📈 Database Statistics")
+    st.write("Overview of your historical image analysis database.")
+    
+    # Get database statistics
+    stats = db.get_database_stats()
+    
+    if stats:
+        # Display main stats
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            st.metric("Total Analyses", stats.get('total_records', 0))
+        
+        with col2:
+            st.metric("Database Type", stats.get('database_type', 'Unknown'))
+        
+        with col3:
+            st.metric("Likely AI-Generated", stats.get('likely_ai_generated', 0))
+        
+        # Records by year chart
+        if stats.get('records_by_year'):
+            st.subheader("📊 Analyses by Historical Year")
+            
+            years = list(stats['records_by_year'].keys())
+            counts = list(stats['records_by_year'].values())
+            
+            # Create a simple bar chart using Streamlit
+            chart_data = {
+                'Year': years,
+                'Count': counts
+            }
+            st.bar_chart(chart_data)
+            
+            # Also show as table
+            st.subheader("📋 Detailed Breakdown")
+            for year, count in sorted(stats['records_by_year'].items(), key=lambda x: x[0], reverse=True):
+                st.write(f"**{year}:** {count} analysis{'es' if count != 1 else ''}")
+        
+        # Database information
+        st.subheader("🗄️ Database Information")
+        st.write(f"**Type:** {stats.get('database_type')}")
+        st.write(f"**Total Records:** {stats.get('total_records', 0)}")
+        st.write(f"**AI-Generated Images Detected:** {stats.get('likely_ai_generated', 0)}")
+        
+    else:
+        st.error("Unable to retrieve database statistics.")
+    
+    # Recent activity
+    st.subheader("📅 Recent Activity")
+    recent = db.get_analysis_history(5)
+    
+    if recent:
+        for item in recent:
+            st.write(f"• **{item['title']}** ({item['year']}) - analyzed on {item['created_at']}")
+    else:
+        st.info("No recent activity found.")
     
     # Information section
     st.markdown("---")
