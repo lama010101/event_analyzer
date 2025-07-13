@@ -18,12 +18,14 @@ Preferred communication style: Simple, everyday language.
 - Simplified architecture to use OpenAI GPT-4o Vision as primary analysis engine
 - Added batch processing and JSON export for multiple images
 - **Added comprehensive database functionality:**
+  - Supabase database integration (primary)
   - PostgreSQL database integration with SQLite fallback
-  - Automatic storage of all analysis results
+  - Automatic storage of all analysis results with image URLs
   - Analysis history browsing with 50 most recent results
   - Search functionality across events, titles, and locations
   - Database statistics with visual charts by historical year
   - Full result retrieval by database ID
+  - Image file storage with URL generation
 
 ## System Architecture
 
@@ -46,7 +48,8 @@ The application follows a modular pipeline architecture where each component han
 
 ### Supporting Components
 
-- **DatabaseManager**: Handles PostgreSQL/SQLite database operations for storing and retrieving analysis results
+- **DatabaseManager**: Handles Supabase/PostgreSQL/SQLite database operations for storing and retrieving analysis results
+- **SupabaseManager**: Direct Supabase REST API integration for cloud database storage
 - **Utils**: Geographic utilities for location name to GPS coordinate conversion using geopy
 - **App.py**: Main Streamlit application orchestrating the pipeline with multi-page navigation
 
@@ -59,7 +62,7 @@ The application follows a modular pipeline architecture where each component han
    - GPS coordinate conversion for identified locations
    - Wikipedia URL generation for events
    - Confidence scoring for all identified elements
-5. **Database Storage**: All results automatically saved to PostgreSQL (or SQLite fallback)
+5. **Database Storage**: All results automatically saved to Supabase cloud database (with PostgreSQL/SQLite fallback)
 6. **Result Display**: Structured historical event information with database management features
 
 The pipeline returns:
@@ -68,6 +71,7 @@ The pipeline returns:
 - Location name and GPS coordinates
 - AI-generation probability assessment
 - Wikipedia search and direct article links
+- Image URL for uploaded files
 - Database record ID for future reference
 
 ## Navigation Pages

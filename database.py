@@ -3,6 +3,7 @@ import json
 import sqlite3
 from datetime import datetime
 from typing import Optional, List, Dict, Any
+from supabase_db import SupabaseManager
 
 # Try to import psycopg2, fall back to None if not available
 try:
@@ -19,14 +20,20 @@ class DatabaseManager:
     
     def _detect_database_type(self) -> str:
         """Detect which database to use based on environment"""
-        if os.getenv('DATABASE_URL') and psycopg2 is not None:
+        # Check for Supabase first
+        if os.getenv('VITE_SUPABASE_URL') or os.getenv('NEXT_PUBLIC_SUPABASE_URL'):
+            return 'supabase'
+        elif os.getenv('DATABASE_URL') and psycopg2 is not None:
             return 'postgresql'
         else:
             return 'sqlite'
     
     def init_database(self):
         """Initialize database with required tables"""
-        if self.db_type == 'postgresql':
+        if self.db_type == 'supabase':
+            self.supabase = SupabaseManager()
+            self.supabase.ensure_table_columns()
+        elif self.db_type == 'postgresql':
             self._init_postgresql()
         else:
             self._init_sqlite()
@@ -122,10 +129,12 @@ class DatabaseManager:
         except Exception as e:
             print(f"Error initializing SQLite: {str(e)}")
     
-    def save_analysis_result(self, result: Dict[Any, Any], image_name: str) -> Optional[int]:
+    def save_analysis_result(self, result: Dict[Any, Any], image_name: str, image_url: str = None) -> Optional[int]:
         """Save analysis result to database"""
         try:
-            if self.db_type == 'postgresql':
+            if self.db_type == 'supabase':
+                return self.supabase.save_analysis_result(result, image_name, image_url)
+            elif self.db_type == 'postgresql':
                 return self._save_to_postgresql(result, image_name)
             else:
                 return self._save_to_sqlite(result, image_name)
@@ -255,7 +264,9 @@ class DatabaseManager:
     def get_analysis_history(self, limit: int = 50) -> List[Dict[str, Any]]:
         """Get recent analysis history"""
         try:
-            if self.db_type == 'postgresql':
+            if self.db_type == 'supabase':
+                return self.supabase.get_analysis_history(limit)
+            elif self.db_type == 'postgresql':
                 return self._get_history_postgresql(limit)
             else:
                 return self._get_history_sqlite(limit)
@@ -339,7 +350,9 @@ class DatabaseManager:
     def search_analysis_results(self, query: str, limit: int = 20) -> List[Dict[str, Any]]:
         """Search analysis results by event, title, or location"""
         try:
-            if self.db_type == 'postgresql':
+            if self.db_type == 'supabase':
+                return self.supabase.search_analysis_results(query, limit)
+            elif self.db_type == 'postgresql':
                 return self._search_postgresql(query, limit)
             else:
                 return self._search_sqlite(query, limit)
@@ -427,7 +440,9 @@ class DatabaseManager:
     def get_analysis_by_id(self, analysis_id: int) -> Optional[Dict[str, Any]]:
         """Get full analysis result by ID"""
         try:
-            if self.db_type == 'postgresql':
+            if self.db_type == 'supabase':
+                return self.supabase.get_analysis_by_id(analysis_id)
+            elif self.db_type == 'postgresql':
                 return self._get_by_id_postgresql(analysis_id)
             else:
                 return self._get_by_id_sqlite(analysis_id)
@@ -479,7 +494,9 @@ class DatabaseManager:
     def get_database_stats(self) -> Dict[str, Any]:
         """Get database statistics"""
         try:
-            if self.db_type == 'postgresql':
+            if self.db_type == 'supabase':
+                return self.supabase.get_database_stats()
+            elif self.db_type == 'postgresql':
                 return self._get_stats_postgresql()
             else:
                 return self._get_stats_sqlite()

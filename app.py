@@ -220,6 +220,32 @@ def generate_wikipedia_url(event_name, location=None):
         print(f"Error generating Wikipedia URL: {str(e)}")
         return None
 
+def save_image_and_get_url(uploaded_file, image_index):
+    """Save uploaded image to local storage and return URL"""
+    try:
+        # Create uploads directory if it doesn't exist
+        import os
+        uploads_dir = "uploaded_images"
+        if not os.path.exists(uploads_dir):
+            os.makedirs(uploads_dir)
+        
+        # Generate unique filename
+        from datetime import datetime
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"{timestamp}_{image_index}_{uploaded_file.name}"
+        filepath = os.path.join(uploads_dir, filename)
+        
+        # Save the file
+        with open(filepath, "wb") as f:
+            f.write(uploaded_file.getvalue())
+        
+        # Return the relative URL path
+        return f"/{filepath}"
+        
+    except Exception as e:
+        print(f"Error saving image: {str(e)}")
+        return None
+
 def process_multiple_images(client, images, uploaded_files, db):
     """Process multiple images and return results"""
     results = []
@@ -228,6 +254,11 @@ def process_multiple_images(client, images, uploaded_files, db):
         st.write(f"🔍 Analyzing image {i+1} of {len(images)}...")
         
         try:
+            # Save image and get URL
+            image_url = None
+            if i < len(uploaded_files):
+                image_url = save_image_and_get_url(uploaded_files[i], i+1)
+            
             # Analyze the image
             result = analyze_historical_image(client, image)
             
@@ -242,10 +273,11 @@ def process_multiple_images(client, images, uploaded_files, db):
                 result['wikipedia'] = wiki_info
             
             result['image_index'] = i + 1
+            result['image_url'] = image_url
             
             # Save to database
             image_name = uploaded_files[i].name if i < len(uploaded_files) else f"image_{i+1}"
-            db_id = db.save_analysis_result(result, image_name)
+            db_id = db.save_analysis_result(result, image_name, image_url)
             if db_id:
                 result['database_id'] = db_id
                 st.write(f"✅ Saved to database (ID: {db_id})")
@@ -362,6 +394,9 @@ def analyze_images_page(client, db):
                         
                         if result.get('database_id'):
                             st.markdown(f"**Database ID:** {result['database_id']}")
+                        
+                        if result.get('image_url'):
+                            st.markdown(f"**Image URL:** {result['image_url']}")
                     
                     with col_b:
                         # AI Generation Assessment
