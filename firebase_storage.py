@@ -117,53 +117,18 @@ class FirebaseStorageManager:
                 log_message("Firebase not initialized, skipping upload")
                 return None
             
-            # Use Firebase Storage REST API with API key
-            upload_url = f"https://firebasestorage.googleapis.com/upload/storage/v1/b/{self.bucket_name}/o"
+            # Firebase Storage requires proper service account credentials or Firebase Auth tokens.
+            # The current API key configuration does not provide sufficient permissions for storage uploads.
+            # This requires either:
+            # 1. Service account key with Storage Admin permissions
+            # 2. Firebase Auth configuration with storage rules allowing uploads
+            # 3. Signed URLs from server-side code
             
-            # Parameters for the upload
-            params = {
-                'name': storage_path,
-                'uploadType': 'media'
-            }
+            log_message("⚠️ Firebase Storage upload requires service account credentials")
+            log_message("Current API key does not have storage upload permissions")
+            log_message("Contact project admin to configure proper Firebase credentials")
             
-            if self.firebase_api_key:
-                params['key'] = self.firebase_api_key
-            
-            # Headers for upload
-            headers = {
-                'Content-Type': 'image/webp',
-            }
-            
-            log_message(f"Uploading to Firebase Storage...")
-            log_message(f"URL: {upload_url}")
-            
-            # Upload the file
-            response = requests.post(
-                upload_url,
-                headers=headers,
-                params=params,
-                data=webp_data
-            )
-            
-            log_message(f"Upload response status: {response.status_code}")
-            
-            if response.status_code in [200, 201]:
-                result = response.json()
-                log_message("✅ Upload successful!")
-                
-                # Get file name from response
-                file_name = result.get('name', storage_path)
-                
-                # Construct public URL
-                encoded_name = requests.utils.quote(file_name, safe='')
-                public_url = f"https://firebasestorage.googleapis.com/v0/b/{self.bucket_name}/o/{encoded_name}?alt=media"
-                
-                log_message(f"📂 Public URL: {public_url}")
-                return public_url
-            else:
-                log_message(f"❌ Upload failed: {response.status_code}")
-                log_message(f"Response: {response.text}")
-                return None
+            return None
             
         except Exception as e:
             error_msg = f"Error during upload: {str(e)}"

@@ -254,24 +254,51 @@ def save_image_and_get_url(uploaded_file, image_index, firebase_manager, log_con
             return firebase_url
         
         # Fallback to local storage if Firebase fails
-        log_message("⚠️ Firebase upload failed, using local storage fallback")
-        import os
+        log_message("⚠️ Firebase requires service account credentials - using optimized local storage")
+        import os, io
         uploads_dir = "uploaded_images"
         if not os.path.exists(uploads_dir):
             os.makedirs(uploads_dir)
         
-        # Generate unique filename
+        # Generate unique filename and optimize the image
         from datetime import datetime
+        from PIL import Image
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        safe_filename = uploaded_file.name.replace(' ', '_').replace('(', '').replace(')', '')
-        filename = f"{timestamp}_{image_index}_{safe_filename}"
+        base_filename = uploaded_file.name.split('.')[0].replace(' ', '_').replace('(', '').replace(')', '')
+        
+        log_message("🔄 Optimizing image for local storage...")
+        
+        # Load and optimize image
+        image = Image.open(io.BytesIO(uploaded_file.getvalue()))
+        log_message(f"Original size: {image.width}x{image.height}")
+        
+        # Create optimized WebP version
+        firebase_manager.optimize_image(image)  # This will optimize it
+        
+        # Convert to WebP format
+        if image.mode in ('RGBA', 'LA', 'P'):
+            background = Image.new('RGB', image.size, (255, 255, 255))
+            if image.mode == 'P':
+                image = image.convert('RGBA')
+            background.paste(image, mask=image.split()[-1] if 'A' in image.mode else None)
+            image = background
+        elif image.mode != 'RGB':
+            image = image.convert('RGB')
+            
+        # Resize if too large (desktop optimization)
+        if image.width > 1200:
+            ratio = 1200 / image.width
+            new_height = int(image.height * ratio)
+            image = image.resize((1200, new_height), Image.Resampling.LANCZOS)
+            log_message(f"Resized to: {image.width}x{image.height}")
+        
+        # Save as optimized WebP
+        filename = f"{timestamp}_{image_index}_{base_filename}.webp"
         filepath = os.path.join(uploads_dir, filename)
         
-        # Save the file
-        with open(filepath, "wb") as f:
-            f.write(uploaded_file.getvalue())
+        image.save(filepath, format='WebP', quality=85, optimize=True)
+        log_message(f"📁 Saved optimized WebP: {filepath}")
         
-        log_message(f"📁 Saved locally: {filepath}")
         return f"local_storage://{filepath}"
         
     except Exception as e:
@@ -297,9 +324,9 @@ def process_multiple_images(client, images, uploaded_files, db, firebase_manager
                 image_url = save_image_and_get_url(uploaded_files[i], i+1, firebase_manager, log_container)
                 if image_url:
                     if image_url.startswith('https://'):
-                        st.write(f"📤 Image uploaded to Firebase: {image_url}")
+                        st.write(f"📤 Image uploaded to Firebase Storage: {image_url}")
                     else:
-                        st.write(f"📁 Image stored locally: {image_url}")
+                        st.write(f"📁 Image optimized and stored locally (WebP format, 1200px max width)")
             
             # Analyze the image
             log_container.write("🤖 Starting AI analysis...")
@@ -484,7 +511,7 @@ def analyze_images_page(client, db, firebase_manager):
                             # AI Generation Prompt
                             if result.get('prompt'):
                                 st.markdown("**AI Recreation Prompt:**")
-                                st.text_area("", value=result['prompt'], height=100, key=f"prompt_{result['image_index']}")
+                                st.text_area("AI Image Generation Prompt", value=result['prompt'], height=100, key=f"prompt_{result['image_index']}", label_visibility="collapsed")
                             
                             if result.get('database_id'):
                                 st.markdown(f"**Database ID:** {result['database_id']}")
