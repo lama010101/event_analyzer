@@ -20,13 +20,18 @@ class DatabaseManager:
     
     def _detect_database_type(self) -> str:
         """Detect which database to use based on environment"""
-        # Check for Supabase first
-        if os.getenv('VITE_SUPABASE_URL') or os.getenv('NEXT_PUBLIC_SUPABASE_URL'):
+        # Always use Supabase as primary choice
+        try:
+            # Test if we can initialize Supabase
+            test_supabase = SupabaseManager()
             return 'supabase'
-        elif os.getenv('DATABASE_URL') and psycopg2 is not None:
-            return 'postgresql'
-        else:
-            return 'sqlite'
+        except Exception as e:
+            print(f"Supabase not available: {str(e)}")
+            # Check for PostgreSQL
+            if os.getenv('DATABASE_URL') and psycopg2 is not None:
+                return 'postgresql'
+            else:
+                return 'sqlite'
     
     def init_database(self):
         """Initialize database with required tables"""

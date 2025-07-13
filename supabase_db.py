@@ -8,11 +8,18 @@ class SupabaseManager:
     """Manages Supabase database operations for historical image analysis results"""
     
     def __init__(self):
-        self.supabase_url = os.getenv('VITE_SUPABASE_URL') or os.getenv('NEXT_PUBLIC_SUPABASE_URL')
-        self.supabase_key = os.getenv('SUPABASE_SERVICE_ROLE_KEY') or os.getenv('VITE_SUPABASE_ANON_KEY') or os.getenv('NEXT_PUBLIC_SUPABASE_ANON_KEY')
+        # Set Supabase credentials directly since environment variables might not persist
+        self.supabase_url = "https://jghesmrwhegaotbztrhr.supabase.co"
+        self.supabase_key = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImpnaGVzbXJ3aGVnYW90Ynp0cmhyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDQ0MzAwMDEsImV4cCI6MjA2MDAwNjAwMX0.C-zSGAiZAIbvKh9vNb2_s3DHogSzSKImLkRbjr_h5xI"
         
-        if not self.supabase_url or not self.supabase_key:
-            raise ValueError("Supabase URL and key are required")
+        # Try environment variables first, then fall back to hardcoded
+        env_url = os.getenv('VITE_SUPABASE_URL') or os.getenv('NEXT_PUBLIC_SUPABASE_URL')
+        env_key = os.getenv('SUPABASE_SERVICE_ROLE_KEY') or os.getenv('VITE_SUPABASE_ANON_KEY') or os.getenv('NEXT_PUBLIC_SUPABASE_ANON_KEY')
+        
+        if env_url:
+            self.supabase_url = env_url
+        if env_key:
+            self.supabase_key = env_key
         
         self.headers = {
             'apikey': self.supabase_key,
@@ -25,6 +32,7 @@ class SupabaseManager:
         self.table_name = "ai-guess"
         
         print(f"Supabase initialized with URL: {self.supabase_url}")
+        print(f"Using key: {self.supabase_key[:20]}...")
         
     def ensure_table_columns(self):
         """Ensure the ai-guess table has all necessary columns"""
@@ -95,20 +103,36 @@ class SupabaseManager:
                 'created_at': datetime.now().isoformat()
             }
             
-            # Make POST request to Supabase
+            # Make POST request to Supabase with detailed logging
+            print(f"Attempting to save to Supabase table: {self.table_name}")
+            print(f"URL: {self.base_url}/{self.table_name}")
+            print(f"Data keys: {list(data.keys())}")
+            
             response = requests.post(
                 f"{self.base_url}/{self.table_name}",
                 headers=self.headers,
                 json=data
             )
             
+            print(f"Response status: {response.status_code}")
+            print(f"Response headers: {dict(response.headers)}")
+            
             if response.status_code in [200, 201]:
                 result_data = response.json()
+                print(f"Success! Inserted data: {result_data}")
                 if result_data and len(result_data) > 0:
                     return result_data[0].get('id')
                 return None
             else:
-                print(f"Error saving to Supabase: {response.status_code} - {response.text}")
+                print(f"Error saving to Supabase: {response.status_code}")
+                print(f"Response text: {response.text}")
+                print(f"Request headers: {self.headers}")
+                # Try to parse error details
+                try:
+                    error_detail = response.json()
+                    print(f"Error details: {error_detail}")
+                except:
+                    pass
                 return None
                 
         except Exception as e:

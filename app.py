@@ -8,6 +8,7 @@ import requests
 import urllib.parse
 from openai import OpenAI
 from database import DatabaseManager
+from firebase_storage import FirebaseStorageManager
 
 # Initialize OpenAI client
 @st.cache_resource
@@ -23,6 +24,12 @@ def get_openai_client():
 def get_database():
     """Initialize database connection"""
     return DatabaseManager()
+
+# Initialize Firebase Storage
+@st.cache_resource
+def get_firebase_storage():
+    """Initialize Firebase Storage"""
+    return FirebaseStorageManager()
 
 def image_to_base64(image):
     """Convert PIL Image to base64 string"""
@@ -220,10 +227,16 @@ def generate_wikipedia_url(event_name, location=None):
         print(f"Error generating Wikipedia URL: {str(e)}")
         return None
 
-def save_image_and_get_url(uploaded_file, image_index):
-    """Save uploaded image to local storage and return URL"""
+def save_image_and_get_url(uploaded_file, image_index, firebase_manager):
+    """Upload image to Firebase Storage and return URL"""
     try:
-        # Create uploads directory if it doesn't exist
+        # Try Firebase upload first
+        firebase_url = firebase_manager.upload_image(uploaded_file, image_index)
+        
+        if firebase_url:
+            return firebase_url
+        
+        # Fallback to local storage if Firebase fails
         import os
         uploads_dir = "uploaded_images"
         if not os.path.exists(uploads_dir):
@@ -246,7 +259,7 @@ def save_image_and_get_url(uploaded_file, image_index):
         print(f"Error saving image: {str(e)}")
         return None
 
-def process_multiple_images(client, images, uploaded_files, db):
+def process_multiple_images(client, images, uploaded_files, db, firebase_manager):
     """Process multiple images and return results"""
     results = []
     
@@ -257,7 +270,9 @@ def process_multiple_images(client, images, uploaded_files, db):
             # Save image and get URL
             image_url = None
             if i < len(uploaded_files):
-                image_url = save_image_and_get_url(uploaded_files[i], i+1)
+                image_url = save_image_and_get_url(uploaded_files[i], i+1, firebase_manager)
+                if image_url:
+                    st.write(f"📤 Image uploaded: {image_url}")
             
             # Analyze the image
             result = analyze_historical_image(client, image)
@@ -281,6 +296,8 @@ def process_multiple_images(client, images, uploaded_files, db):
             if db_id:
                 result['database_id'] = db_id
                 st.write(f"✅ Saved to database (ID: {db_id})")
+            else:
+                st.write("⚠️ Database save failed - check logs")
             
             results.append(result)
             
@@ -301,9 +318,10 @@ def main():
     st.title("🏛️ Historical Image Analysis Pipeline")
     st.markdown("Upload historical images to extract detailed event information including title, description, date, location, and GPS coordinates. All results are saved to the database for future reference.")
     
-    # Initialize OpenAI client and database
+    # Initialize OpenAI client, database, and Firebase storage
     client = get_openai_client()
     db = get_database()
+    firebase_manager = get_firebase_storage()
     
     if client is None:
         st.error("❌ OpenAI API key not found. Please add your OPENAI_API_KEY to continue.")
@@ -322,7 +340,7 @@ def main():
     ])
     
     if page == "🔍 Analyze Images":
-        analyze_images_page(client, db)
+        analyze_images_page(client, db, firebase_manager)
     elif page == "📚 Analysis History":
         history_page(db)
     elif page == "🔎 Search Results":
@@ -330,7 +348,7 @@ def main():
     elif page == "📈 Database Statistics":
         statistics_page(db)
 
-def analyze_images_page(client, db):
+def analyze_images_page(client, db, firebase_manager):
     """Main image analysis page"""
     
     # File upload - Multiple files
@@ -368,7 +386,7 @@ def analyze_images_page(client, db):
             try:
                 with st.spinner("Analyzing images with AI..."):
                     # Process all images
-                    all_results = process_multiple_images(client, images, uploaded_files, db)
+                    all_results = process_multiple_images(client, images, uploaded_files, db, firebase_manager)
                 
                 st.success(f"✅ Analysis complete for {len(all_results)} images!")
                 
