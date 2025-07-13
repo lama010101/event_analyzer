@@ -77,38 +77,54 @@ class FirebaseStorageManager:
             }
             content_type = content_type_map.get(file_extension, 'image/jpeg')
             
-            # Firebase Storage REST API URL (encode the path properly)
-            encoded_path = requests.utils.quote(storage_path, safe='')
-            upload_url = f"https://firebasestorage.googleapis.com/v0/b/{self.bucket_name}/o?name={encoded_path}"
+            # Use Firebase Storage public API without authentication for public uploads
+            # This approach works for public uploads to Firebase Storage
+            upload_url = f"https://firebasestorage.googleapis.com/v0/b/{self.bucket_name}/o"
+            
+            # Parameters for the upload
+            params = {
+                'name': storage_path,
+                'uploadType': 'media'
+            }
             
             # Headers for upload
             headers = {
                 'Content-Type': content_type,
             }
             
+            print(f"Uploading to Firebase: {upload_url} with path: {storage_path}")
+            
             # Upload the file
             response = requests.post(
                 upload_url,
                 headers=headers,
+                params=params,
                 data=uploaded_file.getvalue()
             )
+            
+            print(f"Firebase upload response: {response.status_code}")
             
             if response.status_code in [200, 201]:
                 # Get the download URL
                 result = response.json()
-                download_token = result.get('downloadTokens')
+                print(f"Firebase response data: {result}")
                 
-                if download_token:
-                    # Construct public URL
-                    public_url = f"https://firebasestorage.googleapis.com/v0/b/{self.bucket_name}/o/{storage_path.replace('/', '%2F')}?alt=media&token={download_token}"
-                else:
-                    # Fallback public URL without token
-                    public_url = f"https://firebasestorage.googleapis.com/v0/b/{self.bucket_name}/o/{storage_path.replace('/', '%2F')}?alt=media"
+                # Get file name from response
+                file_name = result.get('name', storage_path)
+                
+                # Construct public URL using the standard Firebase Storage URL format
+                encoded_name = requests.utils.quote(file_name, safe='')
+                public_url = f"https://firebasestorage.googleapis.com/v0/b/{self.bucket_name}/o/{encoded_name}?alt=media"
                 
                 print(f"Image uploaded successfully to Firebase: {public_url}")
                 return public_url
             else:
-                print(f"Failed to upload to Firebase: {response.status_code} - {response.text}")
+                print(f"Failed to upload to Firebase: {response.status_code}")
+                print(f"Response text: {response.text}")
+                print(f"Request URL: {upload_url}")
+                print(f"Request params: {params}")
+                # Firebase permission denied - this means we need proper authentication
+                # For now, return None to fall back to local storage
                 return None
             
         except Exception as e:

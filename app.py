@@ -82,6 +82,8 @@ Provide your analysis in JSON format with these exact fields:
 - "ai_analysis": Explanation of AI generation assessment
 - "extracted_text": Any visible text you can see in the image
 - "visual_elements": Key visual elements that helped with identification
+- "prompt": Detailed description that could be used by an AI image generator to recreate this image, including style, composition, lighting, historical period, clothing, architecture, and atmosphere
+- "celebrity": Boolean true if image contains a famous person with a Wikipedia page, false otherwise
 
 Be as specific as possible about dates. If you can identify the exact date, provide it. Carefully analyze for signs of AI generation such as inconsistent details, impossible combinations, or artifacts."""
                         },
@@ -107,7 +109,7 @@ Be as specific as possible about dates. If you can identify the exact date, prov
 def validate_result(result):
     """Validate and clean the API response"""
     # Ensure all required fields are present
-    required_fields = ['title', 'event', 'description', 'location_name', 'year', 'exact_date', 'confidence', 'ai_generated_probability']
+    required_fields = ['title', 'event', 'description', 'location_name', 'year', 'exact_date', 'confidence', 'ai_generated_probability', 'prompt', 'celebrity']
     
     for field in required_fields:
         if field not in result:
@@ -158,7 +160,9 @@ def get_default_value(field):
         'exact_date': 'Unknown',
         'confidence': {'year': 0, 'location': 0, 'event': 0, 'exact_date': 0},
         'ai_generated_probability': 0,
-        'ai_analysis': 'Unable to determine if AI-generated'
+        'ai_analysis': 'Unable to determine if AI-generated',
+        'prompt': 'Historical photograph with unidentified subjects and context',
+        'celebrity': False
     }
     return defaults.get(field, 'Unknown')
 
@@ -173,7 +177,9 @@ def get_error_response(error_message):
         'exact_date': 'Unknown',
         'confidence': {'year': 0, 'location': 0, 'event': 0, 'exact_date': 0},
         'ai_generated_probability': 0,
-        'ai_analysis': 'Could not analyze due to error'
+        'ai_analysis': 'Could not analyze due to error',
+        'prompt': 'Error occurred during analysis',
+        'celebrity': False
     }
 
 def get_gps_coordinates(location_name):
@@ -237,6 +243,7 @@ def save_image_and_get_url(uploaded_file, image_index, firebase_manager):
             return firebase_url
         
         # Fallback to local storage if Firebase fails
+        print("Firebase upload failed, using local storage fallback")
         import os
         uploads_dir = "uploaded_images"
         if not os.path.exists(uploads_dir):
@@ -245,15 +252,16 @@ def save_image_and_get_url(uploaded_file, image_index, firebase_manager):
         # Generate unique filename
         from datetime import datetime
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        filename = f"{timestamp}_{image_index}_{uploaded_file.name}"
+        safe_filename = uploaded_file.name.replace(' ', '_').replace('(', '').replace(')', '')
+        filename = f"{timestamp}_{image_index}_{safe_filename}"
         filepath = os.path.join(uploads_dir, filename)
         
         # Save the file
         with open(filepath, "wb") as f:
             f.write(uploaded_file.getvalue())
         
-        # Return the relative URL path
-        return f"/{filepath}"
+        # Return the relative URL path (this will be stored but not directly accessible via web)
+        return f"local_storage://{filepath}"
         
     except Exception as e:
         print(f"Error saving image: {str(e)}")

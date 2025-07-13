@@ -60,6 +60,8 @@ class SupabaseManager:
         print("- wikipedia_search_url (text)")
         print("- wikipedia_direct_url (text)")
         print("- image_url (text)")
+        print("- prompt (text)")
+        print("- celebrity (boolean, default false)")
         print("- raw_result (jsonb)")
         print("- created_at (timestamp with time zone, default now())")
     
@@ -99,6 +101,8 @@ class SupabaseManager:
                 'wikipedia_search_url': wikipedia.get('search_url'),
                 'wikipedia_direct_url': wikipedia.get('direct_url'),
                 'image_url': image_url,
+                'prompt': result.get('prompt'),
+                'celebrity': result.get('celebrity', False),
                 'raw_result': result,
                 'created_at': datetime.now().isoformat()
             }
