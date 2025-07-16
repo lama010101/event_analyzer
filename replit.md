@@ -26,6 +26,11 @@ Preferred communication style: Simple, everyday language.
   - Database statistics with visual charts by historical year
   - Full result retrieval by database ID
   - Image file storage with URL generation
+- **Enhanced celebrity detection with comma-separated names storage**
+- **Added comprehensive results table displaying all metadata**
+- **Implemented step-by-step processing logs for debugging**
+- **Added image optimization with WebP conversion and size limits**
+- **Fixed Vercel deployment configuration (Note: Streamlit requires persistent server environment)**
 
 ## System Architecture
 
